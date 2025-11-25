@@ -1,84 +1,94 @@
-// server.js — coleta TODOS os nextPageCursor da Roblox
-// npm i express node-fetch
+#!/usr/bin/env python3
+import time
+import requests
+import threading
+from flask import Flask, jsonify
 
-import express from "express";
-import fetch from "node-fetch";
+app = Flask(__name__)
 
-const app = express();
-app.use(express.json());
+# ==============================
+# CONFIG
+# ==============================
+GAME_ID = "109983668079237"
+BASE_URL = f"https://games.roblox.com/v1/games/{GAME_ID}/servers/Public?sortOrder=Asc&limit=100"
 
-// ===================== CONFIG =====================
-const PORT = process.env.PORT || 4000;
-const GAME_ID = process.env.GAME_ID || "109983668079237";
+REFRESH_INTERVAL = 60  # segundos
 
-const BASE_URL = `https://games.roblox.com/v1/games/${GAME_ID}/servers/Public?sortOrder=Asc&limit=100`;
-const REFRESH_INTERVAL = Number(process.env.REFRESH_INTERVAL || 60_000); // 1 minuto
+# ==============================
+# ESTADO
+# ==============================
+cursors = []
+last_refresh = 0
 
-// ===================== ESTADO =====================
-let cursors = [];
-let lastRefresh = 0;
 
-// ===================== FUNÇÃO PRINCIPAL =====================
+# ==============================
+# FUNÇÃO PRINCIPAL
+# ==============================
+def collect_all_cursors():
+    global cursors, last_refresh
 
-async function collectAllCursors() {
-    console.log("[CursorCollector] Iniciando coleta de nextPageCursor...");
+    print("[CursorCollector] Iniciando coleta...")
+    collected = []
 
-    let pageCursor = null;
-    let page = 1;
-    const newList = [];
+    cursor = None
+    page = 1
 
-    while (true) {
-        // monta URL
-        const url = pageCursor
-            ? `${BASE_URL}&cursor=${encodeURIComponent(pageCursor)}`
-            : BASE_URL;
+    while True:
+        if cursor:
+            url = f"{BASE_URL}&cursor={cursor}"
+        else:
+            url = BASE_URL
 
-        console.log(`[CursorCollector] Página ${page}...`);
+        print(f"[CursorCollector] Página {page}...")
 
-        // faz request
-        const res = await fetch(url);
-        if (!res.ok) {
-            console.log(`Erro ao buscar página (${res.status})`);
-            break;
-        }
+        try:
+            response = requests.get(url, timeout=10)
+            data = response.json()
+        except Exception as e:
+            print("Erro:", e)
+            break
 
-        const data = await res.json();
+        next_cursor = data.get("nextPageCursor")
 
-        // pega nextPageCursor
-        if (data.nextPageCursor) {
-            newList.push(data.nextPageCursor);
-            pageCursor = data.nextPageCursor;
-            page++;
-        } else {
-            break;
-        }
-    }
+        if next_cursor:
+            collected.append(next_cursor)
+            cursor = next_cursor
+            page += 1
+        else:
+            break
 
-    cursors = newList;
-    lastRefresh = Date.now();
-    console.log(`[CursorCollector] Coleta completa com ${cursors.length} cursors.`);
-}
+    cursors = collected
+    last_refresh = time.time()
 
-// ===================== ENDPOINT =====================
+    print(f"[CursorCollector] Coleta finalizada: {len(cursors)} cursors coletados.")
 
-app.get("/cursors", (req, res) => {
-    res.json({
-        updatedAt: new Date(lastRefresh).toISOString(),
-        total: cursors.length,
-        cursors,
-    });
-});
 
-// ===================== ATUALIZAÇÃO AUTOMÁTICA =====================
+# ==============================
+# THREAD DE ATUALIZAÇÃO
+# ==============================
+def auto_refresh():
+    while True:
+        collect_all_cursors()
+        time.sleep(REFRESH_INTERVAL)
 
-setInterval(() => {
-    collectAllCursors();
-}, REFRESH_INTERVAL);
 
-collectAllCursors(); // primeiro carregamento imediato
+threading.Thread(target=auto_refresh, daemon=True).start()
 
-// ===================== START =====================
 
-app.listen(PORT, () => {
-    console.log(`Servidor iniciado na porta ${PORT}`);
-});
+# ==============================
+# ENDPOINT
+# ==============================
+@app.get("/cursors")
+def get_cursors():
+    return jsonify({
+        "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_refresh)),
+        "total": len(cursors),
+        "cursors": cursors
+    })
+
+
+# ==============================
+# START
+# ==============================
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=4000)
