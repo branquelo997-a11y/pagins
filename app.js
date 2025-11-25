@@ -10,7 +10,7 @@ app = Flask(__name__)
 # CONFIG
 # ==============================
 GAME_ID = "109983668079237"
-BASE_URL = "https://games.roblox.com/v1/games/{GAME_ID}/servers/Public?sortOrder=Asc&limit=100"
+BASE_URL = f"https://games.roblox.com/v1/games/{GAME_ID}/servers/Public?sortOrder=Asc&limit=100"
 
 REFRESH_INTERVAL = 60  # segundos
 
@@ -78,7 +78,7 @@ threading.Thread(target=auto_refresh, daemon=True).start()
 # ==============================
 # ENDPOINT
 # ==============================
-@app.get("/cursors")
+@app.route("/cursors")
 def get_cursors():
     return jsonify({
         "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_refresh)),
@@ -88,7 +88,7 @@ def get_cursors():
 
 
 # ==============================
-# START
+# START (local)
 # ==============================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=4000)
