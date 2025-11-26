@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-import time
 import requests
 import threading
+import time
 from flask import Flask, jsonify
+import logging
+
+logging.basicConfig(level=logging.INFO, format='[CURSOR] %(message)s')
 
 app = Flask(__name__)
 
@@ -11,84 +14,87 @@ app = Flask(__name__)
 # ==============================
 GAME_ID = "109983668079237"
 BASE_URL = f"https://games.roblox.com/v1/games/{GAME_ID}/servers/Public?sortOrder=Asc&limit=100"
-
-REFRESH_INTERVAL = 60  # segundos
-
-# ==============================
-# ESTADO
-# ==============================
-cursors = []
-last_refresh = 0
-
+REQUEST_TIMEOUT = 10
+SLEEP_BETWEEN_PAGES = 0.1
+SLEEP_FULL_CYCLE = 1
 
 # ==============================
-# FUNÇÃO PRINCIPAL
+# ARMAZENAMENTO
 # ==============================
-def collect_all_cursors():
-    global cursors, last_refresh
+cursors = []            # lista de cursores coletados
+seen_cursors = set()    # usado para evitar duplicados
 
-    print("[CursorCollector] Iniciando coleta...")
-    collected = []
-
-    cursor = None
-    page = 1
+# ==============================
+# THREAD: PAGINAÇÃO INFINITA
+# ==============================
+def paginate_forever():
+    global cursors, seen_cursors
 
     while True:
-        if cursor:
-            url = f"{BASE_URL}&cursor={cursor}"
-        else:
-            url = BASE_URL
-
-        print(f"[CursorCollector] Página {page}...")
-
         try:
-            response = requests.get(url, timeout=10)
-            data = response.json()
+            next_cursor = ""
+
+            while True:
+                url = BASE_URL
+                if next_cursor:
+                    url += f"&cursor={next_cursor}"
+
+                logging.info(f"Pegando página... cursor={next_cursor}")
+
+                r = requests.get(url, timeout=REQUEST_TIMEOUT)
+                if r.status_code != 200:
+                    logging.warning("Erro na request, pausando...")
+                    time.sleep(2)
+                    break
+
+                data = r.json()
+
+                # SALVA O CURSOR ATUAL NA LISTA
+                if next_cursor and next_cursor not in seen_cursors:
+                    seen_cursors.add(next_cursor)
+                    cursors.append(next_cursor)
+                    logging.info(f"Salvo cursor: {next_cursor}")
+
+                # PEGA O PRÓXIMO CURSOR
+                next_cursor = data.get("nextPageCursor")
+
+                if not next_cursor:
+                    logging.info("Fim das páginas — reiniciando ciclo...")
+                    break
+
+                time.sleep(SLEEP_BETWEEN_PAGES)
+
+            time.sleep(SLEEP_FULL_CYCLE)
+
         except Exception as e:
-            print("Erro:", e)
-            break
-
-        next_cursor = data.get("nextPageCursor")
-
-        if next_cursor:
-            collected.append(next_cursor)
-            cursor = next_cursor
-            page += 1
-        else:
-            break
-
-    cursors = collected
-    last_refresh = time.time()
-
-    print(f"[CursorCollector] Coleta finalizada: {len(cursors)} cursors coletados.")
+            logging.error(f"Erro inesperado: {e}")
+            time.sleep(2)
 
 
 # ==============================
-# THREAD DE ATUALIZAÇÃO
+# ENDPOINTS
 # ==============================
-def auto_refresh():
-    while True:
-        collect_all_cursors()
-        time.sleep(REFRESH_INTERVAL)
 
-
-threading.Thread(target=auto_refresh, daemon=True).start()
-
-
-# ==============================
-# ENDPOINT
-# ==============================
-@app.route("/cursors")
+@app.route("/cursors", methods=["GET"])
 def get_cursors():
     return jsonify({
-        "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_refresh)),
-        "total": len(cursors),
+        "count": len(cursors),
         "cursors": cursors
     })
 
 
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"status": "Cursor API rodando", "total_cursors": len(cursors)})
+
+
 # ==============================
-# START (local)
+# START
 # ==============================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=4000)
+    # inicia thread sem travar o flask
+    t = threading.Thread(target=paginate_forever)
+    t.daemon = True
+    t.start()
+
+    app.run(host="0.0.0.0", port=8000)
